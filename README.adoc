@@ -182,6 +182,313 @@ PATCH /users/$userId --json '{"name": "John Doe"}'
 Snapshot
 ```
 
+== Collections
+
+Instead of one big script, you can organize requests as `collection/folder/request` under `collections/`.
+
+[source,sh]
+----
+# 1. Create a collection. This writes collections/jp/_env.sh (BASE_URL, curl options, hooks shared by all its requests).
+./new.sh --collection jp https://jsonplaceholder.typicode.com
+
+# 2. Add requests, at any folder depth.
+./new.sh jp/users/get-user GET /users/1
+./new.sh jp/users/01-create POST /users
+
+# 3. Run a collection, a folder, or a single request.
+./run.sh jp
+./run.sh jp/users
+./run.sh jp/users/get-user
+
+./run.sh -l jp   # list requests
+./run.sh -n jp   # dry run: print curl commands only
+----
+
+Requests run in sorted order, so prefix names (`01-login.sh`, `02-list.sh`) to control the sequence.
+
+== Configuring curl options (headers, auth, etc.)
+
+Poorman does not have its own settings for headers or authentication.
+Anything you write after the path is passed straight to https://curl.se/docs/manpage.html[curl], so if you can do it with curl, you can do it with Poorman.
+
+There are two places to put an option:
+
+[cols="1,2,2", options="header"]
+|===
+| Where | Effect | Use it for
+
+| `CurlOptionGlobal <option...>` +
+(in `_env.sh`, or near the top of a script)
+| Applies to every request *after* that line.
+| Things every request needs: auth, `Accept` header, `--location`.
+
+| `CurlOptionOnce <option...>` +
+(right above one request)
+| Applies to the next request only.
+| A one-off header or different credentials for a single request.
+
+|===
+
+You can also put options on the request line itself:
+
+[source,sh]
+----
+GET /users/1 --header 'X-Debug: 1'
+----
+
+In a collection, `CurlOptionGlobal` lines go in `collections/<name>/_env.sh`, so all requests in that collection share them.
+In a single-file script (like `sample.sh`), put them above your requests.
+
+=== Basic auth (username and password)
+
+[source,sh]
+----
+CurlOptionGlobal --user 'alice:s3cret'
+----
+
+curl turns this into an `Authorization: Basic ...` header for you.
+Only the first `:` separates the username from the password, so the password may contain colons.
+
+=== Bearer token
+
+[source,sh]
+----
+CurlOptionGlobal --oauth2-bearer 'eyJhbGciOi...'
+----
+
+This sends `Authorization: Bearer eyJhbGciOi...`.
+The equivalent, written as a plain header:
+
+[source,sh]
+----
+CurlOptionGlobal --header 'Authorization: Bearer eyJhbGciOi...'
+----
+
+=== API key
+
+Most APIs want the key in a header.
+Check the API's docs for the header name:
+
+[source,sh]
+----
+CurlOptionGlobal --header 'X-API-Key: abc123'
+----
+
+=== Other common headers
+
+[source,sh]
+----
+CurlOptionGlobal --header 'Accept: application/json'
+CurlOptionGlobal --header 'X-Request-Source: poorman'   # add as many as you like
+----
+
+`--json '...'` (used in the `POST` examples) already sets `Content-Type: application/json` and `Accept: application/json`, so you rarely need to add them yourself.
+
+=== Other handy options
+
+[cols="1,2", options="header"]
+|===
+| Option | Meaning
+
+| `--location`
+| Follow redirects.
+
+| `--max-time 10`
+| Give up after 10 seconds.
+
+| `--verbose`
+| Show the full request and response headers (useful when debugging).
+
+| `--cookie 'session=abc'`
+| Send a cookie.
+
+| `--insecure`
+| Skip TLS certificate checks. Only use on a local or test server.
+
+|===
+
+Run `curl --help all` or `man curl` for the full list.
+
+=== Self-signed or internal HTTPS servers (TLS errors)
+
+curl checks that the server's certificate is trusted *and* that its name matches the address you used.
+Internal servers often fail one or both, with errors like `curl: (60) SSL certificate problem` or `certificate subject name 'x' does not match target hostname '192.168.0.10'`.
+
+*Quick, for a trusted test server only:* skip the check.
+
+[source,sh]
+----
+CurlOptionGlobal --insecure
+----
+
+*Proper fix:* use the name on the certificate, map it to the IP, and trust the certificate.
+
+. Find the name: `curl -vk https://192.168.0.10/` and read the `subject:` (CN) and `subjectAltName` lines.
+. Save the certificate into the collection folder:
++
+[source,sh]
+----
+openssl s_client -connect 192.168.0.10:443 </dev/null | openssl x509 > collections/jp/server.crt
+----
+. In `_env.sh`:
++
+[source,sh]
+----
+BASE_URL=https://the-cert-name/some/path
+CurlOptionGlobal --resolve the-cert-name:443:192.168.0.10 # <1>
+CurlOptionGlobal --cacert "$COLLECTION_DIR/server.crt" # <2>
+----
+<1> `name:port:IP`. Requests to `the-cert-name` go to that IP, so the name check passes.
+<2> Trusts that certificate. Relative paths are resolved from where you run `run.sh`, not from the request file, so use `$COLLECTION_DIR` (or an absolute path).
+
+`--cacert` alone does not fix a name mismatch, and `--resolve` alone does not fix an untrusted (self-signed) certificate. A self-signed server usually needs both.
+
+=== Quoting tips
+
+* Use single quotes (`'...'`) for fixed text, because the shell leaves it alone.
+* Use double quotes (`"..."`) when the value contains a variable, such as `"$TOKEN"`.
+* Always quote values that contain spaces, so the header below stays one argument:
++
+[source,sh]
+----
+CurlOptionGlobal --header 'X-Greeting: hello world'
+----
+
+=== Keeping secrets out of git
+
+Do not commit real passwords or tokens.
+A simple pattern is to keep them in a separate file that git ignores, and refer to them by variable name.
+
+. Create `collections/jp/_secrets.sh` (the name is only a convention) and add `collections/*/_secrets.sh` to your `.gitignore`:
++
+[source,sh]
+----
+TOKEN='eyJhbGciOi...'
+----
+. Load it in `collections/jp/_env.sh`, before the option that uses it:
++
+[source,sh]
+----
+. "$COLLECTION_DIR/_secrets.sh" # <1>
+CurlOptionGlobal --oauth2-bearer "$TOKEN" # <2>
+----
+<1> `$COLLECTION_DIR` is set by every generated request file to the collection's folder, so this works at any folder depth. (Request files made before this was added lack it; add a `COLLECTION_DIR=...` line above the `_env.sh` line.)
+<2> Double quotes, so the shell fills in the value.
+
+A simpler alternative is to pass it from the command line:
+
+[source,sh]
+----
+TOKEN='eyJhbGciOi...' ./run.sh jp
+----
+
+with `CurlOptionGlobal --oauth2-bearer "$TOKEN"` in `_env.sh`.
+
+[WARNING]
+====
+* A snapshot saves the status, timing, a few response headers and the body, but also the full URL. Do not put tokens in the query string (`?api_key=...`), or they end up in your script. Send them in a header instead.
+* `DRY_RUN=1` / `./run.sh -n` prints the full curl command, including your credentials. Do not paste its output into chat or tickets.
+====
+
+== Troubleshooting
+
+Poorman is a thin layer over curl and shell, so most problems can be found by looking at the curl command it builds, then at what curl and the server said.
+
+=== Step 1: see the exact curl command
+
+[source,sh]
+----
+./run.sh -n jp/users/get-user   # collections
+DRY_RUN=1 ./my_api.sh           # single-file script
+----
+
+Nothing is sent. Poorman prints the curl command instead.
+Check the URL (is `BASE_URL` + path what you expected?), the headers, and that your variables were filled in (for example, `--oauth2-bearer abc` and not an empty value).
+You can copy the command, remove `--write-out ...`, and run it in your terminal.
+
+=== Step 2: see what curl and the server are doing
+
+Add `--verbose` to one request to see the request and response headers (it prints to stderr):
+
+[source,sh]
+----
+GET /users/1 --verbose
+----
+
+To change the output for every request, add these in `_env.sh`:
+
+[source,sh]
+----
+CurlOptionGlobal --silent --show-error  # hide the progress meter, but still show curl errors
+CurlOptionGlobal --verbose              # remember to remove it when done
+----
+
+To trace the shell script itself (every line as it runs), use `sh -x`:
+
+[source,sh]
+----
+sh -x ./my_api.sh
+sh -x collections/jp/users/get-user.sh
+----
+
+=== Common problems
+
+[cols="2,3", options="header"]
+|===
+| Symptom | Likely cause and fix
+
+| `curl: (6) Could not resolve host` / `(7) Failed to connect`
+| Wrong or missing `BASE_URL`, no network, or the server is not running. Check it with `-n`.
+
+| `Snapshot` line never turns into a snapshot
+| The request was `Skip`ped, it was a dry run (`-n`), or the response was empty (without `jq`, a failed connection gives an empty snapshot). Fix the cause and run again.
+  Also, don't cut the script off while it runs (for example, with `| head`), because the snapshot is written when the script exits.
+
+| The snapshot is wrong or old (for example, `http_code 0` from a failed run) and it won't update
+| A snapshot is only written once: the `Snapshot` line is replaced by the recorded block. To record again, delete the `: <<'SNAPSHOT'` ... `SNAPSHOT` block and put back a line containing just `Snapshot`, then run the script.
+
+| Snapshot has only the body, no status code or headers
+| Install https://jqlang.org/[`jq`]. Rich snapshots (status, timing, headers) need it.
+
+| The server returns `401` / `403`
+| Credentials are missing or wrong. Use `-n` to confirm the option is there and has a value. See *Configuring curl options*.
+
+| `308 Permanent Redirect` (or any `301`/`302`/`303`/`307`) and an HTML page as the response
+| curl does not follow redirects by default. Add `CurlOptionGlobal --location` to `_env.sh`. Use `--verbose` to see the `Location:` header and where it wants you to go. This often means `http` should be `https`, or the path needs a trailing `/`; fixing `BASE_URL` or the path is better than following the redirect every time.
+
+| Options typed on the command line, like `./run.sh jp/x CurlOptionGlobal --user a:b`, have no effect
+| `CurlOptionGlobal` is a line inside a script, not a command-line option, and `run.sh` takes only a target (it now rejects extra arguments). Put the line in the collection's `_env.sh`. For a one-off, edit the request file.
+
+| A `4xx` or `5xx` response, but the script keeps going
+| That is how curl works by default: an error response is still a successful transfer. Add `CurlOptionOnce --fail` before a request if you want curl to report an error instead (the response body is then not shown).
+
+| `Not found: ...` from `run.sh`
+| The target is relative to `collections/` and has no `.sh`. Run `./run.sh -l` to list valid names.
+
+| `Unknown collection: ...` from `new.sh`
+| Create it first with `./new.sh --collection <name> <BASE_URL>`.
+
+| `poorman.sh: No such file or directory` (single-file scripts)
+| `. ./poorman.sh` is relative to the directory you run from. Run the script from the folder that contains `poorman.sh`, or change that line to an absolute path. (Generated collection requests don't have this problem.)
+
+| `_env.sh: No such file` or `poorman.sh: No such file` (collection requests)
+| The request file was moved to a different folder depth, so its relative `..` paths are wrong. Regenerate it with `new.sh`, or fix the `..` count on its first lines. `.../_secrets.sh: No such file` means `COLLECTION_DIR` is not set: the request file predates it (see *Keeping secrets out of git*).
+
+| Only some requests run
+| `ONLY=1` is set (either in the script or your environment), and only requests starting with `Only` run. Unset it.
+
+| Header or JSON is split up or missing
+| Quoting. A value with spaces needs quotes, and a value with a variable needs double quotes. Check with `-n`.
+
+
+|===
+
+=== Still stuck?
+
+. Reproduce it with `-n`, and paste that curl command into a terminal.
+. If curl alone works but Poorman does not, the difference is in your shell script (quoting, variables, hooks). Compare the two with `sh -x`.
+. If curl alone also fails, the problem is the request itself: URL, headers, auth, or the server.
+
 ## Reference
 
 ### Configuration
