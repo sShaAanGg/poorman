@@ -5,6 +5,7 @@
 # Usage:
 #   ./new.sh --collection <collection> [--base-url <BASE_URL>]
 #   ./new.sh <collection>/[<folder>/...]<request> [METHOD] [PATH]
+#   ./new.sh -h | --help
 #
 #   BASE_URL  prefix of every request URL; can also be set later in _env.sh.
 #             "--base-url" may be left out: --collection <collection> <BASE_URL>
@@ -20,13 +21,23 @@ set -eu
 root=$(cd "$(dirname "$0")" && pwd)
 collections=$root/collections
 
+# Print the help text and exit. With no argument it is an error: print to stderr, exit 1.
+# usage 0 is for --help: print to stdout, exit 0.
 usage() {
   # The comment block at the top of this file, up to the first non-comment line.
-  sed -n '3,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0" >&2
-  exit 1
+  help=$(sed -n '3,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0")
+  if [ "${1:-1}" -eq 0 ]; then
+    printf '%s\n' "$help"
+  else
+    printf '%s\n' "$help" >&2
+  fi
+  exit "${1:-1}"
 }
 
 [ $# -ge 1 ] || usage
+case $1 in
+-h | --help) usage 0 ;;
+esac
 
 if [ "$1" = --collection ]; then
   [ $# -ge 2 ] || usage
