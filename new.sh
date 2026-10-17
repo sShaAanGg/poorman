@@ -3,14 +3,16 @@
 # Scaffold collections and requests under ./collections.
 #
 # Usage:
-#   ./new.sh --collection <collection> <BASE_URL>
+#   ./new.sh --collection <collection> [--base-url <BASE_URL>]
 #   ./new.sh <collection>/[<folder>/...]<request> [METHOD] [PATH]
 #
-#   METHOD  GET (default), POST, PUT, PATCH or DELETE
-#   PATH    request path, defaults to /
+#   BASE_URL  prefix of every request URL; can also be set later in _env.sh.
+#             "--base-url" may be left out: --collection <collection> <BASE_URL>
+#   METHOD    GET (default), POST, PUT, PATCH or DELETE
+#   PATH      request path, defaults to /
 #
 # Examples:
-#   ./new.sh --collection jsonplaceholder https://jsonplaceholder.typicode.com
+#   ./new.sh --collection jsonplaceholder --base-url https://jsonplaceholder.typicode.com
 #   ./new.sh jsonplaceholder/users/get-user GET /users/1
 
 set -eu
@@ -19,16 +21,29 @@ root=$(cd "$(dirname "$0")" && pwd)
 collections=$root/collections
 
 usage() {
-  sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//' >&2
+  # The comment block at the top of this file, up to the first non-comment line.
+  sed -n '3,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0" >&2
   exit 1
 }
 
 [ $# -ge 1 ] || usage
 
 if [ "$1" = --collection ]; then
-  [ $# -eq 3 ] || usage
+  [ $# -ge 2 ] || usage
   name=$2
-  base_url=$3
+  shift 2
+  case $# in
+  0) base_url= ;;
+  1) base_url=$1 ;;
+  2)
+    [ "$1" = --base-url ] || usage
+    base_url=$2
+    ;;
+  *) usage ;;
+  esac
+  case $base_url in
+  -*) usage ;;
+  esac
   case $name in
   */* | '' | _*)
     echo "Invalid collection name: $name" >&2
@@ -46,9 +61,13 @@ if [ "$1" = --collection ]; then
 # Shared by every request in the "$name" collection.
 # Edit this file to set the base URL, headers, authentication and hooks.
 
-BASE_URL=$base_url
-
 EOF
+    if [ "$base_url" ]; then
+      # Single-quoted, so characters like & ? ; $ in the URL are kept as-is.
+      printf "BASE_URL='%s'\n\n" "$(printf '%s' "$base_url" | sed "s/'/'\\\\''/g")"
+    else
+      printf '%s\n' "# Fill in your API's base URL, for example: BASE_URL='https://api.example.com'" 'BASE_URL=' ''
+    fi
     cat <<'EOF'
 # /// curl options ///
 #
@@ -140,7 +159,7 @@ case $collection in
 esac
 if [ ! -f "$collections/$collection/_env.sh" ]; then
   echo "Unknown collection: $collection" >&2
-  echo "Create it first: ./new.sh --collection $collection <BASE_URL>" >&2
+  echo "Create it first: ./new.sh --collection $collection --base-url <BASE_URL>" >&2
   exit 1
 fi
 

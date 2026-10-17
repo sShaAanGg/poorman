@@ -82,7 +82,7 @@ sh -x collections/jp/users/get-user.sh
 | The target is relative to `collections/` and has no `.sh`. Run `./run.sh -l` to list valid names.
 
 | `Unknown collection: ...` from `new.sh`
-| Create it first with `./new.sh --collection <name> <BASE_URL>`.
+| Create it first with `./new.sh --collection <name> --base-url <BASE_URL>`.
 
 | `poorman.sh: No such file or directory` (single-file scripts)
 | `. ./poorman.sh` is relative to the directory you run from. Run the script from the folder that contains `poorman.sh`, or change that line to an absolute path. (Generated collection requests don't have this problem.)
