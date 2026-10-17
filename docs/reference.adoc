@@ -1,0 +1,221 @@
+= Reference
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+:toc:
+
+== Configuration
+
+[cols="1,1,1", options="header"]
+|===
+| Name | Description | Example
+
+| `BASE_URL`
+| The prefix of all request URLs. A trailing slash (`/`) is optional.
+| https://example.com
+
+| `DRY_RUN`
+| Set to `1` to print the enabled request commands.
+| 0/1
+
+| `ONLY`
+| Set to `1` to only run the requests starts with `Only`.
+| 0/1
+
+|===
+
+== Request
+
+[cols="2,1,5", options="header"]
+|===
+| Method & Syntax | Description | Example
+
+| `GET <path> [curl_options...]`
+| Sends a GET request.
+a|
+[source,sh]
+----
+postId=1
+GET /posts/$postId
+----
+
+
+| `POST <path> [curl_options...]`
+| Sends a POST request.
+a|
+[source,sh]
+----
+POST /posts --verbose --json "$(cat <<'JSON'
+{
+  "id": 1,
+  "title": "foo",
+  "body": "bar",
+  "userId": 1
+}
+JSON
+)"
+----
+
+| `PUT <path> [curl_options...]`
+| Sends a PUT request.
+a|
+[source,sh]
+----
+PUT /posts/1 --json "$(cat <<'JSON'
+{
+  "id": 1,
+  "title": "foo",
+  "body": "bar",
+  "userId": 1
+}
+JSON
+)"
+----
+
+| `PATCH <path> [curl_options...]`
+| Sends a PATCH request.
+a|
+[source,sh]
+----
+PATCH /albums/1/photos --json '{"date": 1767515098}'
+----
+
+| `DELETE <path> [curl_options...]`
+| Sends a DELETE request.
+a|
+[source,sh]
+----
+DELETE /posts --url-param 'user=1'
+----
+
+|===
+
+=== Variables
+
+[cols="1,2", options="header"]
+|===
+| Name | Description
+
+| `BODY`
+| The response body of latest request.
+
+| `META_JSON`
+| All curl write-out variables in json format of latest request. (`%{json}`)
+
+| `HEADER_JSON`
+| curl write-out headers in json format of latest request. (`%{header_json}`)
+
+| `SNAPSHOT`
+| The content that will be used for constructing `Snapshot`. Set `SNAPSHOT` to create custom snapshots in `AfterHook`.
+
+|===
+
+
+== Modifier
+
+=== `CurlOptionOnce <curl_option...>`
+Sets `curl` options for the next request only.
+
+*Example:*
+[source,sh]
+----
+# This applies only to the next GET request
+CurlOptionOnce --header "X-Custom-Header: value"
+GET /some/path
+----
+
+=== `CurlOptionGlobal <curl_option...>`
+Sets `curl` options for all subsequent requests.
+
+*Example:*
+[source,sh]
+----
+# This applies to all subsequent requests
+CurlOptionGlobal --location
+GET /some/path
+----
+
+=== `Snapshot`
+
+Captures previous request result and replace itself.
+
+[source,sh]
+----
+GET /users/1
+Snapshot
+----
+
+After running the script, it will become:
+
+[source,sh]
+----
+GET /users/1
+: <<'SNAPSHOT'
+http_code        200
+method           GET
+size_download    509
+time_total       0.479236
+url_effective    https://jsonplaceholder.typicode.com/users/1
+date             Sat, 10 Jan 2026 07:33:15 GMT
+content-type     application/json; charset=utf-8
+-------------------------
+{
+  "id": 1,
+  "name": "Leanne Graham",
+  "username": "Bret"
+}
+SNAPSHOT
+----
+
+=== `Skip <request>`
+
+Skips the execution of a request.
+
+*Example:*
+[source,sh]
+----
+# This request will not be executed
+Skip GET /users/1
+----
+
+=== `Only <request>`
+
+With `ONLY=1` environment variable set. Only the requests wrapped by `Only` will be executed.
+
+*Example:*
+
+[source,sh]
+----
+ONLY=1
+Only GET /users/1                         # execute
+POST /users --json '{"name": "New User"}' # skipped
+Only DELETE /users/2                      # execute
+----
+
+[source,sh]
+----
+Only GET /users/1                         # execute
+POST /users --json '{"name": "New User"}' # execute, since ONLY is not equal to 1
+Only DELETE /users/2                      # execute
+----
+
+== Hook
+
+=== `BeforeHook`
+A function that is executed before each enabled request.
+
+=== `AfterHook`
+A function that is executed after each enabled request. This is useful for processing the response, for example, pretty print only the response body with `jq`.
+
+*Example:*
+[source,sh]
+----
+AfterHook() {
+  # Pretty-print JSON response using jq
+  jq -n --argjson body "$BODY" '$body'
+}
+----
