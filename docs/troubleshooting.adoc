@@ -1,0 +1,106 @@
+= Troubleshooting
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+:toc:
+
+Poorman is a thin layer over curl and shell, so most problems can be found by looking at the curl command it builds, then at what curl and the server said.
+
+== Step 1: see the exact curl command
+
+[source,sh]
+----
+./run.sh -n jp/users/get-user   # collections
+DRY_RUN=1 ./my_api.sh           # single-file script
+----
+
+Nothing is sent. Poorman prints the curl command instead.
+Check the URL (is `BASE_URL` + path what you expected?), the headers, and that your variables were filled in (for example, `--oauth2-bearer abc` and not an empty value).
+You can copy the command, remove `--write-out ...`, and run it in your terminal.
+
+== Step 2: see what curl and the server are doing
+
+Add `--verbose` to one request to see the request and response headers (it prints to stderr):
+
+[source,sh]
+----
+GET /users/1 --verbose
+----
+
+To change the output for every request, add these in `_env.sh`:
+
+[source,sh]
+----
+CurlOptionGlobal --silent --show-error  # hide the progress meter, but still show curl errors
+CurlOptionGlobal --verbose              # remember to remove it when done
+----
+
+To trace the shell script itself (every line as it runs), use `sh -x`:
+
+[source,sh]
+----
+sh -x ./my_api.sh
+sh -x collections/jp/users/get-user.sh
+----
+
+== Common problems
+
+[cols="2,3", options="header"]
+|===
+| Symptom | Likely cause and fix
+
+| `curl: (6) Could not resolve host` / `(7) Failed to connect`
+| Wrong or missing `BASE_URL`, no network, or the server is not running. Check it with `-n`.
+
+| `Snapshot` line never turns into a snapshot
+| The request was `Skip`ped, it was a dry run (`-n`), or the response was empty (without `jq`, a failed connection gives an empty snapshot). Fix the cause and run again.
+  Also, don't cut the script off while it runs (for example, with `| head`), because the snapshot is written when the script exits.
+
+| The snapshot is wrong or old (for example, `http_code 0` from a failed run) and it won't update
+| A snapshot is only written once: the `Snapshot` line is replaced by the recorded block. To record again, delete the `: <<'SNAPSHOT'` ... `SNAPSHOT` block and put back a line containing just `Snapshot`, then run the script.
+
+| Snapshot has only the body, no status code or headers
+| Install https://jqlang.org/[`jq`]. Rich snapshots (status, timing, headers) need it.
+
+| The server returns `401` / `403`
+| Credentials are missing or wrong. Use `-n` to confirm the option is there and has a value. See link:curl-options.adoc[Configuring curl options].
+
+| `308 Permanent Redirect` (or any `301`/`302`/`303`/`307`) and an HTML page as the response
+| curl does not follow redirects by default. Add `CurlOptionGlobal --location` to `_env.sh`. Use `--verbose` to see the `Location:` header and where it wants you to go. This often means `http` should be `https`, or the path needs a trailing `/`; fixing `BASE_URL` or the path is better than following the redirect every time.
+
+| Options typed on the command line, like `./run.sh jp/x CurlOptionGlobal --user a:b`, have no effect
+| `CurlOptionGlobal` is a line inside a script, not a command-line option, and `run.sh` takes only a target (it now rejects extra arguments). Put the line in the collection's `_env.sh`. For a one-off, edit the request file.
+
+| A `4xx` or `5xx` response, but the script keeps going
+| That is how curl works by default: an error response is still a successful transfer. Add `CurlOptionOnce --fail` before a request if you want curl to report an error instead (the response body is then not shown).
+
+| `Not found: ...` from `run.sh`
+| The target is relative to `collections/` and has no `.sh`. Run `./run.sh -l` to list valid names.
+
+| `Unknown collection: ...` from `new.sh`
+| Create it first with `./new.sh --collection <name> <BASE_URL>`.
+
+| `poorman.sh: No such file or directory` (single-file scripts)
+| `. ./poorman.sh` is relative to the directory you run from. Run the script from the folder that contains `poorman.sh`, or change that line to an absolute path. (Generated collection requests don't have this problem.)
+
+| `_env.sh: No such file` or `poorman.sh: No such file` (collection requests)
+| The request file was moved to a different folder depth, so its relative `..` paths are wrong. Regenerate it with `new.sh`, or fix the `..` count on its first lines. `.../_secrets.sh: No such file` means `COLLECTION_DIR` is not set: the request file predates it (see link:curl-options.adoc#_keeping_secrets_out_of_git[Keeping secrets out of git]).
+
+| Only some requests run
+| `ONLY=1` is set (either in the script or your environment), and only requests starting with `Only` run. Unset it.
+
+| Header or JSON is split up or missing
+| Quoting. A value with spaces needs quotes, and a value with a variable needs double quotes. Check with `-n`.
+
+
+|===
+
+== Still stuck?
+
+. Reproduce it with `-n`, and paste that curl command into a terminal.
+. If curl alone works but Poorman does not, the difference is in your shell script (quoting, variables, hooks). Compare the two with `sh -x`.
+. If curl alone also fails, the problem is the request itself: URL, headers, auth, or the server.

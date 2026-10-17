@@ -138,7 +138,7 @@ _fetch() {
   [ "${BASE_URL:-}" ] && BASE_URL="${BASE_URL%/}/"
   set -- curl -X "$request" --write-out "$WRITE_OUT" "$@" "${BASE_URL:-}${path#/}"
   if [ "${DRY_RUN:-}" = 1 ]; then
-    quote_complex_only "$@"
+    to_list_quote_complex "$@"
     printf '%s' "${list#?}"
   else
     _after_hook "$("$@")"
