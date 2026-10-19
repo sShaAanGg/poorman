@@ -35,9 +35,18 @@ usage() {
 }
 
 [ $# -ge 1 ] || usage
-case $1 in
--h | --help) usage 0 ;;
-esac
+for arg; do
+  case $arg in
+  -h | --help) usage 0 ;;
+  esac
+done
+
+# Print a reminder if the collection's _env.sh still has an empty BASE_URL.
+remind_base_url() {
+  if grep -Eq "^BASE_URL=(''|\"\")?[[:space:]]*\$" "$collections/$1/_env.sh"; then
+    echo "Reminder: BASE_URL is empty. Set it in collections/$1/_env.sh before running requests." >&2
+  fi
+}
 
 if [ "$1" = --collection ]; then
   [ $# -ge 2 ] || usage
@@ -56,7 +65,7 @@ if [ "$1" = --collection ]; then
   -*) usage ;;
   esac
   case $name in
-  */* | '' | _*)
+  */* | '' | _* | -*)
     echo "Invalid collection name: $name" >&2
     exit 1
     ;;
@@ -137,6 +146,7 @@ AfterHook() {
 EOF
   } >"$env_file"
   echo "Created collections/$name/_env.sh"
+  remind_base_url "$name"
   exit 0
 fi
 
@@ -163,7 +173,7 @@ esac
 
 collection=${target%%/*}
 case $collection in
-'' | _*)
+'' | _* | -*)
   echo "Invalid collection name: $collection" >&2
   exit 1
   ;;
@@ -221,3 +231,4 @@ EOF
 chmod +x "$out"
 echo "Created collections/$target.sh"
 echo "Run it with: ./run.sh $target"
+remind_base_url "$collection"
