@@ -190,7 +190,7 @@ Instead of one big script, you can organize requests as `collection/folder/reque
 [source,sh]
 ----
 # 1. Create a collection. This writes collections/jp/_env.sh (BASE_URL, curl options, hooks shared by all its requests).
-./new.sh --collection jp https://jsonplaceholder.typicode.com
+./new.sh --collection jp --base-url https://jsonplaceholder.typicode.com
 
 # 2. Add requests, at any folder depth.
 ./new.sh jp/users/get-user GET /users/1
